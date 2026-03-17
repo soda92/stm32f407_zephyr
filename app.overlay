@@ -1,4 +1,9 @@
 / {
+	chosen {
+		zephyr,console = &usart1;
+		zephyr,shell-uart = &usart1;
+	};
+
 	aliases {
 		led0 = &led_p6;
 		oled0 = &ssd1306;
@@ -13,24 +18,31 @@
 	};
 };
 
-/* --- CLOCK FIX FOR DEVEBOX (25MHz HSE) --- */
-&clk_hse {
-	clock-frequency = <DT_FREQ_M(25)>;
+/* --- CLOCK FIX: USE HSI (INTERNAL 16MHz) INSTEAD OF HSE --- */
+&clk_hsi {
 	status = "okay";
 };
 
 &pll {
-	div-m = <25>;
-	mul-n = <336>;
+	div-m = <8>;
+	mul-n = <168>;
 	div-p = <2>;
 	div-q = <7>;
-	clocks = <&clk_hse>;
+	clocks = <&clk_hsi>;
 	status = "okay";
 };
 
 &rcc {
 	clocks = <&pll>;
 	clock-frequency = <DT_FREQ_M(168)>;
+};
+
+/* --- UART CONFIG --- */
+&usart1 {
+	status = "okay";
+	pinctrl-0 = <&usart1_tx_pa9 &usart1_rx_pa10>;
+	pinctrl-names = "default";
+	current-speed = <115200>;
 };
 
 /* --- I2C CONFIG --- */

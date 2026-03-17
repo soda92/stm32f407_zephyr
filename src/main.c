@@ -25,37 +25,52 @@ void oled_flash_test(const struct device *dev)
 	while (1) {
 		// --- WHITE ---
 		memset(buffer, 0xFF, sizeof(buffer));
-		LOG_INF("OLED White");
+		LOG_INF("OLED White...");
 		display_write(dev, 0, 0, &desc, buffer);
 		k_msleep(1000);
 
 		// --- BLACK ---
 		memset(buffer, 0x00, sizeof(buffer));
-		LOG_INF("OLED Black");
+		LOG_INF("OLED Black...");
 		display_write(dev, 0, 0, &desc, buffer);
 		k_msleep(1000);
 
 		// Toggle LED too
 		gpio_pin_toggle_dt(&led);
+		LOG_INF("Heartbeat LED toggled");
 	}
 }
 
 int main(void)
 {
+	int ret;
+
+	LOG_INF("--- App Start ---");
+
 	if (!gpio_is_ready_dt(&led)) {
 		LOG_ERR("LED device not ready");
-		return 0;
+	} else {
+		ret = gpio_pin_configure_dt(&led, GPIO_OUTPUT_ACTIVE);
+		if (ret < 0) {
+			LOG_ERR("Failed to configure LED pin: %d", ret);
+		} else {
+			LOG_INF("LED ready on PB2");
+		}
 	}
 
+	LOG_INF("Checking Display device...");
 	if (!device_is_ready(display)) {
-		LOG_ERR("Display device not ready");
-		return 0;
+		LOG_ERR("Display device not ready!");
+	} else {
+		LOG_INF("Display ready, starting test loop...");
+		oled_flash_test(display);
 	}
 
-	gpio_pin_configure_dt(&led, GPIO_OUTPUT_ACTIVE);
-	
-	LOG_INF("Starting OLED Flash Test...");
-	oled_flash_test(display);
+	while (1) {
+		LOG_INF("Idle loop...");
+		gpio_pin_toggle_dt(&led);
+		k_msleep(2000);
+	}
 
 	return 0;
 }
