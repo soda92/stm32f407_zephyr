@@ -2,6 +2,7 @@
 	chosen {
 		zephyr,console = &usart1;
 		zephyr,shell-uart = &usart1;
+		zephyr,display = &ssd1306;
 	};
 
 	aliases {
@@ -9,6 +10,10 @@
 		oled0 = &ssd1306;
 		temp0 = &bme280;
 		flash0 = &w25q16;
+		sw0 = &button_exit;
+		sw1 = &button_save;
+		sw2 = &button_led;
+		sw3 = &button_hist;
 	};
 
 	leds {
@@ -16,6 +21,26 @@
 		led_p6: led_p6 {
 			gpios = <&gpiob 2 GPIO_ACTIVE_LOW>;
 			label = "User LED";
+		};
+	};
+
+	buttons {
+		compatible = "gpio-keys";
+		button_exit: button_0 {
+			gpios = <&gpioa 0 (GPIO_PULL_UP | GPIO_ACTIVE_LOW)>;
+			label = "Exit Button";
+		};
+		button_save: button_1 {
+			gpios = <&gpioa 1 (GPIO_PULL_UP | GPIO_ACTIVE_LOW)>;
+			label = "Save Button";
+		};
+		button_led: button_2 {
+			gpios = <&gpioc 4 (GPIO_PULL_UP | GPIO_ACTIVE_LOW)>;
+			label = "LED Control";
+		};
+		button_hist: button_3 {
+			gpios = <&gpioc 5 (GPIO_PULL_UP | GPIO_ACTIVE_LOW)>;
+			label = "History Button";
 		};
 	};
 };
