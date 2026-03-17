@@ -2,6 +2,7 @@
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/drivers/sensor.h>
 #include <zephyr/drivers/display.h>
+#include <zephyr/display/cfb.h>
 #include <zephyr/drivers/flash.h>
 #include <zephyr/logging/log.h>
 #include <stdio.h>
@@ -23,6 +24,7 @@ struct sensor_data {
 /* --- Global State --- */
 static bool use_fahrenheit = false;
 static bool blink_led = true;
+static char last_button_msg[20] = "None";
 
 /* --- Message Queues --- */
 K_MSGQ_DEFINE(sensor_msgq, sizeof(struct sensor_data), 10, 4);
@@ -44,9 +46,9 @@ struct k_work_delayable exit_btn_work;
 
 void exit_btn_work_handler(struct k_work *work)
 {
-	/* Check if button is still pressed (ACTIVE_LOW means 1 is pressed) */
 	if (gpio_pin_get_dt(&btn_exit) == 1) {
 		use_fahrenheit = !use_fahrenheit;
+		snprintf(last_button_msg, sizeof(last_button_msg), "EXIT (C/F)");
 		LOG_INF("Debounced: Toggle C/F -> %s", use_fahrenheit ? "F" : "C");
 	}
 }
@@ -54,7 +56,6 @@ void exit_btn_work_handler(struct k_work *work)
 static struct gpio_callback exit_btn_cb_data;
 void exit_btn_isr(const struct device *dev, struct gpio_callback *cb, uint32_t pins)
 {
-	/* Start debounce timer */
 	k_work_reschedule(&exit_btn_work, K_MSEC(DEBOUNCE_DELAY_MS));
 }
 
@@ -82,21 +83,50 @@ void sensor_thread_entry(void *p1, void *p2, void *p3)
 	}
 }
 
-/* --- OLED/UI Thread --- */
+/* --- OLED/UI Thread using CFB --- */
 void ui_thread_entry(void *p1, void *p2, void *p3)
 {
 	struct sensor_data data = {0};
-	
-	if (!device_is_ready(display)) return;
+	char str[32];
+
+	if (!device_is_ready(display)) {
+		LOG_ERR("Display device not ready");
+		return;
+	}
+
+	if (cfb_framebuffer_init(display)) {
+		LOG_ERR("Framebuffer initialization failed!");
+		return;
+	}
+
+	cfb_framebuffer_clear(display, true);
+	cfb_display_blanking_off(display);
+
+	/* Use the first available font */
+	cfb_print(display, "ZEPHYR PORT", 0, 0);
+	cfb_framebuffer_finalize(display);
 
 	while (1) {
+		/* Wait for data from sensor thread */
 		k_msgq_get(&sensor_msgq, &data, K_FOREVER);
 
 		float display_temp = use_fahrenheit ? (data.temp * 9.0f / 5.0f + 32.0f) : data.temp;
 
-		LOG_INF("UI: %.2f %c | P: %.1f | H: %.1f", 
-			(double)display_temp, use_fahrenheit ? 'F' : 'C',
-			(double)data.press, (double)data.hum);
+		cfb_framebuffer_clear(display, false);
+		
+		snprintf(str, sizeof(str), "Temp: %.2f %c", (double)display_temp, use_fahrenheit ? 'F' : 'C');
+		cfb_print(display, str, 0, 0);
+
+		snprintf(str, sizeof(str), "Pres: %.1f hPa", (double)data.press);
+		cfb_print(display, str, 0, 16);
+
+		snprintf(str, sizeof(str), "Humi: %.1f %%", (double)data.hum);
+		cfb_print(display, str, 0, 32);
+
+		snprintf(str, sizeof(str), "Btn: %s", last_button_msg);
+		cfb_print(display, str, 0, 48);
+
+		cfb_framebuffer_finalize(display);
 
 		if (blink_led) {
 			gpio_pin_toggle_dt(&led);
@@ -110,14 +140,18 @@ void input_thread_entry(void *p1, void *p2, void *p3)
 	while (1) {
 		if (gpio_pin_get_dt(&btn_led)) {
 			blink_led = !blink_led;
-			LOG_INF("Button PC4: Blink -> %s", blink_led ? "ON" : "OFF");
+			snprintf(last_button_msg, sizeof(last_button_msg), "LED BLINK");
 			if (!blink_led) gpio_pin_set_dt(&led, 0);
-			k_msleep(500); // Simple poll debounce
+			k_msleep(500); 
 		}
 		
 		if (gpio_pin_get_dt(&btn_save)) {
-			LOG_INF("Button PA1: Save Requested (Flash)");
-			/* Flash write logic would go here */
+			snprintf(last_button_msg, sizeof(last_button_msg), "SAVE (FLASH)");
+			k_msleep(500);
+		}
+
+		if (gpio_pin_get_dt(&btn_hist)) {
+			snprintf(last_button_msg, sizeof(last_button_msg), "HISTORY");
 			k_msleep(500);
 		}
 		k_msleep(50);
@@ -131,7 +165,7 @@ K_THREAD_DEFINE(input_tid,  STACK_SIZE, input_thread_entry,  NULL, NULL, NULL, P
 
 int main(void)
 {
-	LOG_INF("Zephyr Full Logic Port Started");
+	LOG_INF("Zephyr Full Logic Port (CFB) Started");
 
 	/* Initialize Hardware */
 	gpio_pin_configure_dt(&led, GPIO_OUTPUT_INACTIVE);
