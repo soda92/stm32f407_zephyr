@@ -1,6 +1,7 @@
 / {
 	aliases {
 		led0 = &led_p6;
+		oled0 = &ssd1306;
 	};
 
 	leds {
@@ -9,5 +10,47 @@
 			gpios = <&gpiob 2 GPIO_ACTIVE_LOW>;
 			label = "User LED";
 		};
+	};
+};
+
+/* --- CLOCK FIX FOR DEVEBOX (25MHz HSE) --- */
+&clk_hse {
+	clock-frequency = <DT_FREQ_M(25)>;
+	status = "okay";
+};
+
+&pll {
+	div-m = <25>;
+	mul-n = <336>;
+	div-p = <2>;
+	div-q = <7>;
+	clocks = <&clk_hse>;
+	status = "okay";
+};
+
+&rcc {
+	clocks = <&pll>;
+	clock-frequency = <DT_FREQ_M(168)>;
+};
+
+/* --- I2C CONFIG --- */
+&i2c1 {
+	status = "okay";
+	pinctrl-0 = <&i2c1_scl_pb6 &i2c1_sda_pb7>;
+	pinctrl-names = "default";
+	clock-frequency = <I2C_BITRATE_FAST>;
+
+	ssd1306: ssd1306@3c {
+		compatible = "solomon,ssd1306fb";
+		reg = <0x3c>;
+		width = <128>;
+		height = <64>;
+		segment-offset = <0>;
+		page-offset = <0>;
+		display-offset = <0>;
+		multiplex-ratio = <63>;
+		segment-remap;
+		com-invdir;
+		prechargep = <0x22>;
 	};
 };
