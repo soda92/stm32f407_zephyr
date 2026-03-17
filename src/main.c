@@ -2,37 +2,61 @@
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/drivers/sensor.h>
 #include <zephyr/drivers/display.h>
+#include <zephyr/drivers/flash.h>
 #include <zephyr/logging/log.h>
 #include <stdio.h>
 
 LOG_MODULE_REGISTER(main);
 
 /* --- Configuration --- */
-#define SENSOR_SLEEP_MS 2000
-#define UI_SLEEP_MS 500
 #define STACK_SIZE 2048
 #define PRIORITY 7
+#define DEBOUNCE_DELAY_MS 50
 
-/* --- Data Structure --- */
+/* --- Data Structures --- */
 struct sensor_data {
 	float temp;
 	float press;
 	float hum;
 };
 
-/* --- Message Queue --- */
+/* --- Global State --- */
+static bool use_fahrenheit = false;
+static bool blink_led = true;
+
+/* --- Message Queues --- */
 K_MSGQ_DEFINE(sensor_msgq, sizeof(struct sensor_data), 10, 4);
 
 /* --- Hardware Devices --- */
 static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(DT_ALIAS(led0), gpios);
 static const struct device *bme280  = DEVICE_DT_GET(DT_ALIAS(temp0));
 static const struct device *display = DEVICE_DT_GET(DT_ALIAS(oled0));
+static const struct device *flash   = DEVICE_DT_GET(DT_ALIAS(flash0));
 
 /* Buttons */
 static const struct gpio_dt_spec btn_exit = GPIO_DT_SPEC_GET(DT_ALIAS(sw0), gpios);
 static const struct gpio_dt_spec btn_save = GPIO_DT_SPEC_GET(DT_ALIAS(sw1), gpios);
 static const struct gpio_dt_spec btn_led  = GPIO_DT_SPEC_GET(DT_ALIAS(sw2), gpios);
 static const struct gpio_dt_spec btn_hist = GPIO_DT_SPEC_GET(DT_ALIAS(sw3), gpios);
+
+/* --- Debounce Logic (Work Queue) --- */
+struct k_work_delayable exit_btn_work;
+
+void exit_btn_work_handler(struct k_work *work)
+{
+	/* Check if button is still pressed (ACTIVE_LOW means 1 is pressed) */
+	if (gpio_pin_get_dt(&btn_exit) == 1) {
+		use_fahrenheit = !use_fahrenheit;
+		LOG_INF("Debounced: Toggle C/F -> %s", use_fahrenheit ? "F" : "C");
+	}
+}
+
+static struct gpio_callback exit_btn_cb_data;
+void exit_btn_isr(const struct device *dev, struct gpio_callback *cb, uint32_t pins)
+{
+	/* Start debounce timer */
+	k_work_reschedule(&exit_btn_work, K_MSEC(DEBOUNCE_DELAY_MS));
+}
 
 /* --- Producer Thread: Sensor Reading --- */
 void sensor_thread_entry(void *p1, void *p2, void *p3)
@@ -54,68 +78,73 @@ void sensor_thread_entry(void *p1, void *p2, void *p3)
 
 			k_msgq_put(&sensor_msgq, &data, K_NO_WAIT);
 		}
-		k_msleep(SENSOR_SLEEP_MS);
+		k_msleep(2000);
 	}
 }
 
-/* --- Input Thread: Button Polling --- */
+/* --- OLED/UI Thread --- */
+void ui_thread_entry(void *p1, void *p2, void *p3)
+{
+	struct sensor_data data = {0};
+	
+	if (!device_is_ready(display)) return;
+
+	while (1) {
+		k_msgq_get(&sensor_msgq, &data, K_FOREVER);
+
+		float display_temp = use_fahrenheit ? (data.temp * 9.0f / 5.0f + 32.0f) : data.temp;
+
+		LOG_INF("UI: %.2f %c | P: %.1f | H: %.1f", 
+			(double)display_temp, use_fahrenheit ? 'F' : 'C',
+			(double)data.press, (double)data.hum);
+
+		if (blink_led) {
+			gpio_pin_toggle_dt(&led);
+		}
+	}
+}
+
+/* --- Input Polling (For other buttons) --- */
 void input_thread_entry(void *p1, void *p2, void *p3)
 {
-	/* Configure buttons */
+	while (1) {
+		if (gpio_pin_get_dt(&btn_led)) {
+			blink_led = !blink_led;
+			LOG_INF("Button PC4: Blink -> %s", blink_led ? "ON" : "OFF");
+			if (!blink_led) gpio_pin_set_dt(&led, 0);
+			k_msleep(500); // Simple poll debounce
+		}
+		
+		if (gpio_pin_get_dt(&btn_save)) {
+			LOG_INF("Button PA1: Save Requested (Flash)");
+			/* Flash write logic would go here */
+			k_msleep(500);
+		}
+		k_msleep(50);
+	}
+}
+
+/* --- Thread Definitions --- */
+K_THREAD_DEFINE(sensor_tid, STACK_SIZE, sensor_thread_entry, NULL, NULL, NULL, PRIORITY, 0, 0);
+K_THREAD_DEFINE(ui_tid,     STACK_SIZE, ui_thread_entry,     NULL, NULL, NULL, PRIORITY, 0, 0);
+K_THREAD_DEFINE(input_tid,  STACK_SIZE, input_thread_entry,  NULL, NULL, NULL, PRIORITY, 0, 0);
+
+int main(void)
+{
+	LOG_INF("Zephyr Full Logic Port Started");
+
+	/* Initialize Hardware */
+	gpio_pin_configure_dt(&led, GPIO_OUTPUT_INACTIVE);
 	gpio_pin_configure_dt(&btn_exit, GPIO_INPUT);
 	gpio_pin_configure_dt(&btn_save, GPIO_INPUT);
 	gpio_pin_configure_dt(&btn_led,  GPIO_INPUT);
 	gpio_pin_configure_dt(&btn_hist, GPIO_INPUT);
 
-	while (1) {
-		if (gpio_pin_get_dt(&btn_exit)) LOG_INF("Button: EXIT Pressed");
-		if (gpio_pin_get_dt(&btn_save)) LOG_INF("Button: SAVE Pressed");
-		if (gpio_pin_get_dt(&btn_led))  LOG_INF("Button: LED Pressed");
-		if (gpio_pin_get_dt(&btn_hist)) LOG_INF("Button: HIST Pressed");
-		
-		k_msleep(100);
-	}
-}
+	/* Setup Interrupt for Exit Button (PA0) */
+	k_work_init_delayable(&exit_btn_work, exit_btn_work_handler);
+	gpio_pin_interrupt_configure_dt(&btn_exit, GPIO_INT_EDGE_TO_ACTIVE);
+	gpio_init_callback(&exit_btn_cb_data, exit_btn_isr, BIT(btn_exit.pin));
+	gpio_add_callback(btn_exit.port, &exit_btn_cb_data);
 
-/* --- OLED Thread: Display Update --- */
-void oled_thread_entry(void *p1, void *p2, void *p3)
-{
-	struct sensor_data data = {0};
-	char msg[32];
-
-	if (!device_is_ready(display)) return;
-
-	/* Simple OLED text output would usually use LVGL, but for a 
-	   quick port we'll just log and assume the display loop is 
-	   waiting for a real UI framework. */
-	
-	while (1) {
-		/* Get latest data from queue without waiting */
-		k_msgq_get(&sensor_msgq, &data, K_FOREVER);
-
-		LOG_INF("Display Update: T=%.2f, P=%.1f, H=%.1f", 
-			(double)data.temp, (double)data.press, (double)data.hum);
-
-		/* In a real app, you'd call lv_label_set_text here */
-		
-		gpio_pin_toggle_dt(&led);
-		k_msleep(UI_SLEEP_MS);
-	}
-}
-
-/* --- Thread Definitions --- */
-K_THREAD_DEFINE(sensor_tid, STACK_SIZE, sensor_thread_entry, NULL, NULL, NULL,
-		PRIORITY, 0, 0);
-
-K_THREAD_DEFINE(input_tid, STACK_SIZE, input_thread_entry, NULL, NULL, NULL,
-		PRIORITY, 0, 0);
-
-K_THREAD_DEFINE(oled_tid, STACK_SIZE, oled_thread_entry, NULL, NULL, NULL,
-		PRIORITY, 0, 0);
-
-int main(void)
-{
-	gpio_pin_configure_dt(&led, GPIO_OUTPUT_ACTIVE);
-	LOG_INF("Zephyr Full Port Started");
 	return 0;
 }
