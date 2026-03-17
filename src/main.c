@@ -100,8 +100,7 @@ void ui_thread_entry(void *p1, void *p2, void *p3)
 	}
 
 	cfb_framebuffer_clear(display, true);
-	cfb_display_blanking_off(display);
-
+	display_blanking_off(display);
 	/* Use the first available font */
 	cfb_print(display, "ZEPHYR PORT", 0, 0);
 	cfb_framebuffer_finalize(display);
