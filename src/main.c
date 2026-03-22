@@ -27,12 +27,30 @@ struct sensor_data {
 };
 
 /* --- Global State --- */
+#ifdef CONFIG_ZTEST
+bool use_fahrenheit = false;
+bool blink_led = true;
+bool view_history = false;
+uint32_t saved_count = 0;
+uint32_t history_index = 0;
+float last_live_temp = 0.0f;
+#else
 static bool use_fahrenheit = false;
 static bool blink_led = true;
 static bool view_history = false;
 static uint32_t saved_count = 0;
 static uint32_t history_index = 0;
 static float last_live_temp = 0.0f;
+#endif
+
+/* --- Mock State --- */
+#ifdef CONFIG_BOARD_NATIVE_SIM
+float mock_temp_val = 25.5f;
+uint8_t mock_flash_storage[4096];
+#ifdef CONFIG_ZTEST
+const struct device *flash = (void*)0x3;
+#endif
+#endif
 
 /* --- Message Queues --- */
 K_MSGQ_DEFINE(sensor_msgq, sizeof(struct sensor_data), 10, 4);
@@ -206,6 +224,7 @@ K_THREAD_DEFINE(sensor_tid, STACK_SIZE, sensor_thread_entry, NULL, NULL, NULL, P
 K_THREAD_DEFINE(ui_tid,     STACK_SIZE, ui_thread_entry,     NULL, NULL, NULL, PRIORITY, 0, 0);
 K_THREAD_DEFINE(input_tid,  STACK_SIZE, input_thread_entry,  NULL, NULL, NULL, PRIORITY, 0, 0);
 
+#ifndef CONFIG_ZTEST
 int main(void)
 {
 	gpio_pin_configure_dt(&led, GPIO_OUTPUT_INACTIVE);
@@ -223,3 +242,4 @@ int main(void)
 
 	return 0;
 }
+#endif
