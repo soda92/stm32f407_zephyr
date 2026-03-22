@@ -7,4 +7,4 @@ if [ ! -f "$ELF_PATH" ]; then
 fi
 
 # Run the dedicated Renode test setup
-renode $(pwd)/test_setup.resc
+renode my_port/test_setup.resc

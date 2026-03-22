@@ -1,16 +1,17 @@
 # Use the working built-in Discovery script as a base
 include @scripts/single-node/stm32f4_discovery.resc
 
-# BME280 seems to be missing in this Renode installation.
-# Using BMP180 as a dummy I2C device so the I2C bus doesn't hang.
-# Note: Zephyr's BME280 driver will still fail to init, but the CPU will run.
-machine LoadPlatformDescriptionFromString "bmp180: Sensors.BMP180 @ i2c1 0x77"
+# Load additional peripherals from REPL file
+machine LoadPlatformDescription @my_port/extra_peripherals.repl
 
 # Load your application
 sysbus LoadELF @build/zephyr/zephyr.elf
 
-# Show the correct UART for your overlay
-showAnalyzer sysbus.usart1
+# Load Python mock handlers
+#python -u @my_port/peripherals.py
+
+# Redirect UART1 output to the terminal (useful for CLI mode)
+sysbus.usart1 CreateFileBackend "/dev/stdout"
 
 # Start the simulation
 start
