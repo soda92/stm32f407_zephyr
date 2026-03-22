@@ -47,7 +47,8 @@ static float last_live_temp = 0.0f;
 #ifdef CONFIG_BOARD_NATIVE_SIM
 float mock_temp_val = 25.5f;
 uint8_t mock_flash_storage[4096];
-int mock_exit_btn_state = 0;
+int mock_gpio_state[32] = {0};
+char last_oled_lines[4][64] = {0};
 struct gpio_callback *registered_gpio_cb = NULL;
 #ifdef CONFIG_ZTEST
 const struct device *flash = (void*)0x3;
@@ -55,6 +56,8 @@ const struct device *flash = (void*)0x3;
 
 void mock_hardware_init(void) {
 	memset(mock_flash_storage, 0xFF, sizeof(mock_flash_storage));
+	memset(mock_gpio_state, 0, sizeof(mock_gpio_state));
+	memset(last_oled_lines, 0, sizeof(last_oled_lines));
 }
 #endif
 
@@ -207,17 +210,21 @@ void input_thread_entry(void *p1, void *p2, void *p3)
 		}
 		if (gpio_pin_get_dt(&btn_hist)) {
 			uint32_t start = k_uptime_get_32();
+			bool erased = false;
 			while (gpio_pin_get_dt(&btn_hist)) {
 				if (k_uptime_get_32() - start > 2000) {
 					LOG_INF("Erasing History...");
 					flash_erase(flash, 0, 4096);
 					saved_count = 0; view_history = false;
+					erased = true;
 					break;
 				}
 				k_msleep(10);
 			}
-			view_history = !view_history;
-			if (view_history && saved_count > 0) history_index = 0;
+			if (!erased) {
+				view_history = !view_history;
+				if (view_history && saved_count > 0) history_index = 0;
+			}
 			k_msleep(200);
 		}
 		k_msleep(50);

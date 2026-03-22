@@ -12,7 +12,8 @@
 /* Mock State */
 extern float mock_temp_val;
 extern uint8_t mock_flash_storage[4096];
-extern int mock_exit_btn_state;
+extern int mock_gpio_state[32]; // Track state per "pin"
+extern char last_oled_lines[4][64];
 extern struct gpio_callback *registered_gpio_cb;
 
 /* Mock device pointers */
@@ -24,11 +25,12 @@ extern const struct device *flash;
 static const struct device *flash   = (void*)0x3;
 #endif
 
-static const struct gpio_dt_spec led = {0};
-static const struct gpio_dt_spec btn_exit = {0};
-static const struct gpio_dt_spec btn_save = {0};
-static const struct gpio_dt_spec btn_led  = {0};
-static const struct gpio_dt_spec btn_hist = {0};
+/* Mock pin assignments for native_sim */
+static const struct gpio_dt_spec led      = { .pin = 0 };
+static const struct gpio_dt_spec btn_exit = { .pin = 1 };
+static const struct gpio_dt_spec btn_save = { .pin = 2 };
+static const struct gpio_dt_spec btn_led  = { .pin = 3 };
+static const struct gpio_dt_spec btn_hist = { .pin = 4 };
 
 /* Mock implementations */
 static inline int mock_flash_read(const struct device *dev, off_t offset, void *data, size_t len) { 
@@ -67,7 +69,11 @@ static inline int mock_sensor_channel_get(const struct device *dev, enum sensor_
 #define device_is_ready(dev) (true)
 #define cfb_framebuffer_init(dev) (0)
 #define cfb_framebuffer_clear(dev, clear) (0)
-static inline int mock_cfb_print(const struct device *dev, const char *str, uint16_t x, uint16_t y) { return 0; }
+static inline int mock_cfb_print(const struct device *dev, const char *str, uint16_t x, uint16_t y) { 
+    int line = y / 12; 
+    if (line >= 0 && line < 4) strncpy(last_oled_lines[line], str, 63);
+    return 0; 
+}
 #define cfb_print mock_cfb_print
 #define cfb_framebuffer_finalize(dev) (0)
 #define display_blanking_off(dev) (0)
@@ -82,7 +88,7 @@ static inline int mock_cfb_get_font_size(const struct device *dev, uint8_t idx, 
 #define gpio_pin_configure_dt(spec, flags) (0)
 #define gpio_pin_set_dt(spec, val) (0)
 static inline int mock_gpio_pin_get_dt(const struct gpio_dt_spec *spec) {
-    return mock_exit_btn_state;
+    return mock_gpio_state[spec->pin];
 }
 #define gpio_pin_get_dt mock_gpio_pin_get_dt
 #define gpio_pin_toggle_dt(spec) (0)
@@ -111,14 +117,15 @@ void flash_save_record(float temp);
 uint32_t get_next_history_index(uint32_t current, uint32_t count);
 
 static int cmd_mock_save(const struct shell *sh, size_t argc, char **argv) {
-    if (!view_history) flash_save_record(last_live_temp);
-    else history_index = get_next_history_index(history_index, saved_count);
+    mock_gpio_state[btn_save.pin] = 1;
+    k_sleep(K_MSEC(100));
+    mock_gpio_state[btn_save.pin] = 0;
     return 0;
 }
 static int cmd_mock_exit(const struct shell *sh, size_t argc, char **argv) {
-    mock_exit_btn_state = 1; mock_trigger_interrupt(); 
+    mock_gpio_state[btn_exit.pin] = 1; mock_trigger_interrupt(); 
     k_sleep(K_MSEC(100)); // Wait for debounce
-    mock_exit_btn_state = 0;
+    mock_gpio_state[btn_exit.pin] = 0;
     return 0;
 }
 static int cmd_mock_temp(const struct shell *sh, size_t argc, char **argv) {
@@ -126,7 +133,7 @@ static int cmd_mock_temp(const struct shell *sh, size_t argc, char **argv) {
     mock_temp_val = strtof(argv[1], NULL); return 0;
 }
 
-SHELL_CMD_REGISTER(mock_save, NULL, "Save current temp", cmd_mock_save);
+SHELL_CMD_REGISTER(mock_save, NULL, "Simulate Save button", cmd_mock_save);
 SHELL_CMD_REGISTER(mock_exit, NULL, "Simulate SW0 (debounce)", cmd_mock_exit);
 SHELL_CMD_REGISTER(mock_temp, NULL, "Set temp", cmd_mock_temp);
 
