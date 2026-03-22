@@ -55,9 +55,7 @@ void flash_init_count(void)
 	saved_count = 0;
 	while (saved_count < MAX_RECORDS) {
 		flash_read(flash, saved_count * RECORD_SIZE, &val, RECORD_SIZE);
-		uint32_t raw;
-		memcpy(&raw, &val, 4);
-		if (raw == 0xFFFFFFFF) break;
+		if (!is_valid_record(val)) break;
 		saved_count++;
 	}
 	LOG_INF("Found %d saved records", saved_count);
@@ -153,17 +151,15 @@ void ui_thread_entry(void *p1, void *p2, void *p3)
 		cfb_framebuffer_clear(display, false);
 
 		if (!view_history) {
-			float t = use_fahrenheit ? celsius_to_fahrenheit(last_live_temp) : last_live_temp;
 			cfb_print(display, "-LIVE VIEW-", 0, 0);
-			snprintf(str, sizeof(str), "Temp%.2f %c", (double)t, use_fahrenheit ? 'F' : 'C');
+			format_temp_display(str, sizeof(str), last_live_temp, use_fahrenheit);
 			cfb_print(display, str, 0, 15);
 			cfb_print(display, "PA1:SAVE PC5:HIST", 0, 34);
 		} else {
 			float h_temp = flash_read_record(history_index);
-			float t = use_fahrenheit ? celsius_to_fahrenheit(h_temp) : h_temp;
-			snprintf(str, sizeof(str), "- HIST [%d/%d] -", history_index + 1, saved_count);
+			format_history_header(str, sizeof(str), history_index, saved_count);
 			cfb_print(display, str, 0, 0);
-			snprintf(str, sizeof(str), "Temp: %.2f %c", (double)t, use_fahrenheit ? 'F' : 'C');
+			format_temp_display(str, sizeof(str), h_temp, use_fahrenheit);
 			cfb_print(display, str, 0, 12);
 			cfb_print(display, "PA1:NEXT PC5:EXIT", 0, 54);
 		}

@@ -21,4 +21,32 @@ ZTEST(logic_tests, test_history_index_wrapping)
     zassert_equal(get_next_history_index(0, 0), 0, "Empty list safety");
 }
 
+ZTEST(logic_tests, test_display_formatting)
+{
+    char buf[32];
+    
+    /* Test Celsius Formatting */
+    format_temp_display(buf, sizeof(buf), 25.5f, false);
+    zassert_str_equal(buf, "Temp: 25.50 C", "C format failed [%s]", buf);
+
+    /* Test Fahrenheit Formatting */
+    format_temp_display(buf, sizeof(buf), 0.0f, true);
+    zassert_str_equal(buf, "Temp: 32.00 F", "F format failed [%s]", buf);
+
+    /* Test History Header */
+    format_history_header(buf, sizeof(buf), 0, 10);
+    zassert_str_equal(buf, "- HIST [1/10] -", "Header format failed");
+}
+
+ZTEST(logic_tests, test_record_validation)
+{
+    float valid = 25.0f;
+    float invalid;
+    uint32_t raw_invalid = 0xFFFFFFFF;
+    memcpy(&invalid, &raw_invalid, 4);
+
+    zassert_true(is_valid_record(valid), "Normal float should be valid");
+    zassert_false(is_valid_record(invalid), "0xFFFFFFFF should be invalid");
+}
+
 ZTEST_SUITE(logic_tests, NULL, NULL, NULL, NULL, NULL);
