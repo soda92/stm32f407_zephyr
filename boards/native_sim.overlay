@@ -1,20 +1,18 @@
 / {
+	chosen {
+		zephyr,display = &dummy_dc;
+		zephyr,flash = &flash0;
+	};
+
 	aliases {
 		led0 = &led0;
-		oled0 = &sdl_dc; /* Simulated display if SDL is available, or just a dummy */
-		temp0 = &bme280_sim;
-		flash0 = &flash_sim;
+		oled0 = &dummy_dc;
+		temp0 = &lm75;
+		flash0 = &flash0;
 		sw0 = &button0;
 		sw1 = &button1;
 		sw2 = &button2;
 		sw3 = &button3;
-	};
-
-	leds {
-		compatible = "gpio-leds";
-		led0: led_0 {
-			gpios = <&gpio0 0 GPIO_ACTIVE_LOW>;
-		};
 	};
 
 	buttons {
@@ -33,23 +31,28 @@
 		};
 	};
 
-	/* Simulated BME280 */
-	bme280_sim: bme280_sim@0 {
-		compatible = "zephyr,dummy-sensor";
-		reg = <0x0 0x1>;
-	};
-
-	/* Simulated Flash */
-	flash_sim: flash_sim@0 {
-		compatible = "zephyr,sim-flash";
-		reg = <0x0 0x1000000>;
-		erase-value = <0xff>;
-	};
-	
 	/* Dummy Display */
-	sdl_dc: sdl_dc {
-		compatible = "zephyr,sdl-dc";
+	dummy_dc: dummy_dc {
+		compatible = "zephyr,dummy-dc";
 		height = <64>;
 		width = <128>;
+		status = "okay";
 	};
+};
+
+&i2c0 {
+	status = "okay";
+	lm75: lm75@48 {
+		compatible = "lm75";
+		reg = <0x48>;
+		status = "okay";
+	};
+};
+
+&flash0 {
+	status = "okay";
+};
+
+&gpio0 {
+	status = "okay";
 };
