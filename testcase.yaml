@@ -1,0 +1,17 @@
+common:
+  harness: ztest
+  tags: unit_testing
+
+tests:
+  my_port.logic:
+    source_dir: tests/unit_tests
+    platform_allow: native_sim
+
+  my_port.integration.renode:
+    harness: console
+    harness_config:
+      type: one_line
+      regex: "Found [0-9]+ saved records"
+    platform_allow: stm32f4_disco
+    extra_args: CONFIG_LOG=y
+    simulation: renode

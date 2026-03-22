@@ -4,3 +4,10 @@
 
 tests/unit_tests/build
 tests/unit_tests/.cache
+
+/logs
+/snapshots
+
+/log.html
+/report.html
+/robot_output.xml
