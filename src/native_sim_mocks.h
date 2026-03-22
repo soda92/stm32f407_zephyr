@@ -12,6 +12,8 @@
 /* Mock State */
 extern float mock_temp_val;
 extern uint8_t mock_flash_storage[4096];
+extern int mock_exit_btn_state;
+extern struct gpio_callback *registered_gpio_cb;
 
 /* Mock device pointers */
 static const struct device *bme280  = (void*)0x1;
@@ -21,6 +23,7 @@ extern const struct device *flash;
 #else
 static const struct device *flash   = (void*)0x3;
 #endif
+
 static const struct gpio_dt_spec led = {0};
 static const struct gpio_dt_spec btn_exit = {0};
 static const struct gpio_dt_spec btn_save = {0};
@@ -64,27 +67,38 @@ static inline int mock_sensor_channel_get(const struct device *dev, enum sensor_
 #define device_is_ready(dev) (true)
 #define cfb_framebuffer_init(dev) (0)
 #define cfb_framebuffer_clear(dev, clear) (0)
-
 static inline int mock_cfb_print(const struct device *dev, const char *str, uint16_t x, uint16_t y) { return 0; }
 #define cfb_print mock_cfb_print
-
 #define cfb_framebuffer_finalize(dev) (0)
 #define display_blanking_off(dev) (0)
 #define cfb_get_numof_fonts(dev) (1)
-
 static inline int mock_cfb_get_font_size(const struct device *dev, uint8_t idx, uint8_t *w, uint8_t *h) {
     *w = 8; *h = 16; return 0;
 }
 #define cfb_get_font_size mock_cfb_get_font_size
-
 #define cfb_framebuffer_set_font(dev, idx) (0)
+
+/* Enhanced GPIO Mocks */
 #define gpio_pin_configure_dt(spec, flags) (0)
 #define gpio_pin_set_dt(spec, val) (0)
-#define gpio_pin_get_dt(spec) (0)
+static inline int mock_gpio_pin_get_dt(const struct gpio_dt_spec *spec) {
+    return mock_exit_btn_state;
+}
+#define gpio_pin_get_dt mock_gpio_pin_get_dt
 #define gpio_pin_toggle_dt(spec) (0)
 #define gpio_pin_interrupt_configure_dt(spec, flags) (0)
-#define gpio_init_callback(cb, hand, pins) 
-#define gpio_add_callback(port, cb) (0)
+#define gpio_init_callback(cb, hand, pins) { (cb)->handler = hand; (cb)->pin_mask = pins; }
+static inline int mock_gpio_add_callback(const struct device *port, struct gpio_callback *callback) {
+    registered_gpio_cb = callback; return 0;
+}
+#define gpio_add_callback mock_gpio_add_callback
+
+/* Shell and Integration Helper */
+static inline void mock_trigger_interrupt(void) {
+    if (registered_gpio_cb && registered_gpio_cb->handler) {
+        registered_gpio_cb->handler(NULL, registered_gpio_cb, registered_gpio_cb->pin_mask);
+    }
+}
 
 /* Shell command logic */
 extern bool use_fahrenheit;
@@ -102,7 +116,10 @@ static int cmd_mock_save(const struct shell *sh, size_t argc, char **argv) {
     return 0;
 }
 static int cmd_mock_exit(const struct shell *sh, size_t argc, char **argv) {
-    use_fahrenheit = !use_fahrenheit; return 0;
+    mock_exit_btn_state = 1; mock_trigger_interrupt(); 
+    k_sleep(K_MSEC(100)); // Wait for debounce
+    mock_exit_btn_state = 0;
+    return 0;
 }
 static int cmd_mock_temp(const struct shell *sh, size_t argc, char **argv) {
     if (argc < 2) return -EINVAL;
@@ -110,7 +127,7 @@ static int cmd_mock_temp(const struct shell *sh, size_t argc, char **argv) {
 }
 
 SHELL_CMD_REGISTER(mock_save, NULL, "Save current temp", cmd_mock_save);
-SHELL_CMD_REGISTER(mock_exit, NULL, "Toggle C/F", cmd_mock_exit);
+SHELL_CMD_REGISTER(mock_exit, NULL, "Simulate SW0 (debounce)", cmd_mock_exit);
 SHELL_CMD_REGISTER(mock_temp, NULL, "Set temp", cmd_mock_temp);
 
 #endif /* CONFIG_BOARD_NATIVE_SIM */

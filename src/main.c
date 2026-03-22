@@ -47,9 +47,15 @@ static float last_live_temp = 0.0f;
 #ifdef CONFIG_BOARD_NATIVE_SIM
 float mock_temp_val = 25.5f;
 uint8_t mock_flash_storage[4096];
+int mock_exit_btn_state = 0;
+struct gpio_callback *registered_gpio_cb = NULL;
 #ifdef CONFIG_ZTEST
 const struct device *flash = (void*)0x3;
 #endif
+
+void mock_hardware_init(void) {
+	memset(mock_flash_storage, 0xFF, sizeof(mock_flash_storage));
+}
 #endif
 
 /* --- Message Queues --- */
@@ -152,10 +158,8 @@ void ui_thread_entry(void *p1, void *p2, void *p3)
 	cfb_framebuffer_init(display);
 	cfb_framebuffer_clear(display, true);
 	display_blanking_off(display);
-	/* Use the first available font */
 	cfb_print(display, "ZEPHYR PORT", 0, 0);
 	cfb_framebuffer_finalize(display);
-	/* Find the smallest font (usually index 0) */
 	int num_fonts = cfb_get_numof_fonts(display);
 	for (int i = 0; i < num_fonts; i++) {
 		uint8_t font_width, font_height;
@@ -220,12 +224,7 @@ void input_thread_entry(void *p1, void *p2, void *p3)
 	}
 }
 
-K_THREAD_DEFINE(sensor_tid, STACK_SIZE, sensor_thread_entry, NULL, NULL, NULL, PRIORITY, 0, 0);
-K_THREAD_DEFINE(ui_tid,     STACK_SIZE, ui_thread_entry,     NULL, NULL, NULL, PRIORITY, 0, 0);
-K_THREAD_DEFINE(input_tid,  STACK_SIZE, input_thread_entry,  NULL, NULL, NULL, PRIORITY, 0, 0);
-
-#ifndef CONFIG_ZTEST
-int main(void)
+void app_setup(void)
 {
 	gpio_pin_configure_dt(&led, GPIO_OUTPUT_INACTIVE);
 	gpio_pin_configure_dt(&btn_exit, GPIO_INPUT);
@@ -239,7 +238,50 @@ int main(void)
 	gpio_pin_interrupt_configure_dt(&btn_exit, GPIO_INT_EDGE_TO_ACTIVE);
 	gpio_init_callback(&exit_btn_cb_data, exit_btn_isr, BIT(btn_exit.pin));
 	gpio_add_callback(btn_exit.port, &exit_btn_cb_data);
+}
 
+#ifdef CONFIG_ZTEST
+struct k_thread sensor_tid_data;
+struct k_thread ui_tid_data;
+struct k_thread input_tid_data;
+k_tid_t sensor_tid = NULL;
+k_tid_t ui_tid = NULL;
+k_tid_t input_tid = NULL;
+K_THREAD_STACK_DEFINE(sensor_stack, STACK_SIZE);
+K_THREAD_STACK_DEFINE(ui_stack,     STACK_SIZE);
+K_THREAD_STACK_DEFINE(input_stack,  STACK_SIZE);
+
+void start_sensor_thread(void) {
+	sensor_tid = k_thread_create(&sensor_tid_data, sensor_stack, STACK_SIZE, sensor_thread_entry, NULL, NULL, NULL, PRIORITY, 0, K_NO_WAIT);
+}
+void start_ui_thread(void) {
+	ui_tid     = k_thread_create(&ui_tid_data, ui_stack, STACK_SIZE, ui_thread_entry, NULL, NULL, NULL, PRIORITY, 0, K_NO_WAIT);
+}
+void start_input_thread(void) {
+	input_tid  = k_thread_create(&input_tid_data, input_stack, STACK_SIZE, input_thread_entry, NULL, NULL, NULL, PRIORITY, 0, K_NO_WAIT);
+}
+
+void start_app_threads(void) {
+	start_sensor_thread();
+	start_ui_thread();
+	start_input_thread();
+}
+
+void stop_app_threads(void) {
+	if (sensor_tid) { k_thread_abort(sensor_tid); sensor_tid = NULL; }
+	if (ui_tid)     { k_thread_abort(ui_tid);     ui_tid = NULL; }
+	if (input_tid)  { k_thread_abort(input_tid);  input_tid = NULL; }
+}
+#else
+K_THREAD_DEFINE(sensor_tid, STACK_SIZE, sensor_thread_entry, NULL, NULL, NULL, PRIORITY, 0, 0);
+K_THREAD_DEFINE(ui_tid,     STACK_SIZE, ui_thread_entry,     NULL, NULL, NULL, PRIORITY, 0, 0);
+K_THREAD_DEFINE(input_tid,  STACK_SIZE, input_thread_entry,  NULL, NULL, NULL, PRIORITY, 0, 0);
+#endif
+
+#ifndef CONFIG_ZTEST
+int main(void)
+{
+	app_setup();
 	return 0;
 }
 #endif
