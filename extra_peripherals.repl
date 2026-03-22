@@ -1,9 +1,0 @@
-ssd1306: Mocks.DummyI2CSlave @ i2c1 0x3C
-
-bme280: Mocks.DummyI2CSlave @ i2c1 0x76
-
-w25q16_storage: Memory.MappedMemory @ sysbus 0x90000000
-    size: 0x200000
-
-w25q16: SPI.Micron_MT25Q @ spi1
-    underlyingMemory: w25q16_storage
