@@ -7,6 +7,7 @@
 #include <zephyr/logging/log.h>
 #include <stdio.h>
 #include <math.h>
+#include "app_logic.h"
 
 LOG_MODULE_REGISTER(main);
 
@@ -152,14 +153,14 @@ void ui_thread_entry(void *p1, void *p2, void *p3)
 		cfb_framebuffer_clear(display, false);
 
 		if (!view_history) {
-			float t = use_fahrenheit ? (last_live_temp * 9.0f / 5.0f + 32.0f) : last_live_temp;
+			float t = use_fahrenheit ? celsius_to_fahrenheit(last_live_temp) : last_live_temp;
 			cfb_print(display, "-LIVE VIEW-", 0, 0);
 			snprintf(str, sizeof(str), "Temp%.2f %c", (double)t, use_fahrenheit ? 'F' : 'C');
 			cfb_print(display, str, 0, 15);
 			cfb_print(display, "PA1:SAVE PC5:HIST", 0, 34);
 		} else {
 			float h_temp = flash_read_record(history_index);
-			float t = use_fahrenheit ? (h_temp * 9.0f / 5.0f + 32.0f) : h_temp;
+			float t = use_fahrenheit ? celsius_to_fahrenheit(h_temp) : h_temp;
 			snprintf(str, sizeof(str), "- HIST [%d/%d] -", history_index + 1, saved_count);
 			cfb_print(display, str, 0, 0);
 			snprintf(str, sizeof(str), "Temp: %.2f %c", (double)t, use_fahrenheit ? 'F' : 'C');
@@ -183,7 +184,7 @@ void input_thread_entry(void *p1, void *p2, void *p3)
 		}
 		if (gpio_pin_get_dt(&btn_save)) {
 			if (!view_history) flash_save_record(last_live_temp);
-			else if (saved_count > 0) history_index = (history_index + 1) % saved_count;
+			else history_index = get_next_history_index(history_index, saved_count);
 			k_msleep(500);
 		}
 		if (gpio_pin_get_dt(&btn_hist)) {
