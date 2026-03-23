@@ -27,6 +27,6 @@ void format_history_header(char *buf, size_t len, uint32_t index, uint32_t total
 bool is_valid_record(float val)
 {
 	uint32_t raw;
-	memcpy(&raw, &val, 4);
+	memcpy(&raw, &val, sizeof(val));
 	return (raw != 0xFFFFFFFF);
 }
