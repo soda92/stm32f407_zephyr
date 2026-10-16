@@ -1,0 +1,58 @@
+/ {
+	chosen {
+		zephyr,display = &dummy_dc;
+		zephyr,flash = &flash0;
+	};
+
+	aliases {
+		led0 = &led0;
+		oled0 = &dummy_dc;
+		temp0 = &lm75;
+		flash0 = &flash0;
+		sw0 = &button0;
+		sw1 = &button1;
+		sw2 = &button2;
+		sw3 = &button3;
+	};
+
+	buttons {
+		compatible = "gpio-keys";
+		button0: button_0 {
+			gpios = <&gpio0 1 GPIO_ACTIVE_LOW>;
+		};
+		button1: button_1 {
+			gpios = <&gpio0 2 GPIO_ACTIVE_LOW>;
+		};
+		button2: button_2 {
+			gpios = <&gpio0 3 GPIO_ACTIVE_LOW>;
+		};
+		button3: button_3 {
+			gpios = <&gpio0 4 GPIO_ACTIVE_LOW>;
+		};
+	};
+
+	/* Dummy Display */
+	dummy_dc: dummy_dc {
+		compatible = "zephyr,dummy-dc";
+		height = <64>;
+		width = <128>;
+		status = "okay";
+	};
+};
+
+&i2c0 {
+	status = "okay";
+	lm75: lm75@48 {
+		compatible = "lm75";
+		reg = <0x48>;
+		status = "okay";
+	};
+};
+
+&flash0 {
+	status = "okay";
+};
+
+&gpio0 {
+	status = "okay";
+};

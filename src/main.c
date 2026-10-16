@@ -7,6 +7,8 @@
 #include <zephyr/logging/log.h>
 #include <stdio.h>
 #include <math.h>
+#include <string.h>
+#include "app_logic.h"
 
 LOG_MODULE_REGISTER(main);
 
@@ -25,17 +27,48 @@ struct sensor_data {
 };
 
 /* --- Global State --- */
+#ifdef CONFIG_ZTEST
+bool use_fahrenheit = false;
+bool blink_led = true;
+bool view_history = false;
+uint32_t saved_count = 0;
+uint32_t history_index = 0;
+float last_live_temp = 0.0f;
+#else
 static bool use_fahrenheit = false;
 static bool blink_led = true;
 static bool view_history = false;
 static uint32_t saved_count = 0;
 static uint32_t history_index = 0;
 static float last_live_temp = 0.0f;
+#endif
+
+/* --- Mock State --- */
+#ifdef CONFIG_BOARD_NATIVE_SIM
+float mock_temp_val = 25.5f;
+uint8_t mock_flash_storage[4096];
+int mock_gpio_state[32] = {0};
+char last_oled_lines[4][64] = {0};
+struct gpio_callback *registered_gpio_cb = NULL;
+#ifdef CONFIG_ZTEST
+const struct device *flash = (void*)0x3;
+#endif
+
+void mock_hardware_init(void) {
+	memset(mock_flash_storage, 0xFF, sizeof(mock_flash_storage));
+	memset(mock_gpio_state, 0, sizeof(mock_gpio_state));
+	memset(last_oled_lines, 0, sizeof(last_oled_lines));
+}
+#endif
 
 /* --- Message Queues --- */
 K_MSGQ_DEFINE(sensor_msgq, sizeof(struct sensor_data), 10, 4);
 
-/* --- Hardware Devices --- */
+/* --- Hardware Mocks (for native_sim) --- */
+#include "native_sim_mocks.h"
+
+/* --- Hardware Devices (Real) --- */
+#ifndef CONFIG_BOARD_NATIVE_SIM
 static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(DT_ALIAS(led0), gpios);
 static const struct device *bme280  = DEVICE_DT_GET(DT_ALIAS(temp0));
 static const struct device *display = DEVICE_DT_GET(DT_ALIAS(oled0));
@@ -46,6 +79,7 @@ static const struct gpio_dt_spec btn_exit = GPIO_DT_SPEC_GET(DT_ALIAS(sw0), gpio
 static const struct gpio_dt_spec btn_save = GPIO_DT_SPEC_GET(DT_ALIAS(sw1), gpios);
 static const struct gpio_dt_spec btn_led  = GPIO_DT_SPEC_GET(DT_ALIAS(sw2), gpios);
 static const struct gpio_dt_spec btn_hist = GPIO_DT_SPEC_GET(DT_ALIAS(sw3), gpios);
+#endif
 
 /* --- Flash Logic --- */
 void flash_init_count(void)
@@ -54,9 +88,7 @@ void flash_init_count(void)
 	saved_count = 0;
 	while (saved_count < MAX_RECORDS) {
 		flash_read(flash, saved_count * RECORD_SIZE, &val, RECORD_SIZE);
-		uint32_t raw;
-		memcpy(&raw, &val, 4);
-		if (raw == 0xFFFFFFFF) break;
+		if (!is_valid_record(val)) break;
 		saved_count++;
 	}
 	LOG_INF("Found %d saved records", saved_count);
@@ -126,43 +158,33 @@ void ui_thread_entry(void *p1, void *p2, void *p3)
 		return;
 	}
 
-	if (cfb_framebuffer_init(display)) {
-		LOG_ERR("Framebuffer initialization failed!");
-		return;
-	}
-	uint8_t font_width, font_height;
-
 	cfb_framebuffer_init(display);
 	cfb_framebuffer_clear(display, true);
 	display_blanking_off(display);
-	/* Use the first available font */
 	cfb_print(display, "ZEPHYR PORT", 0, 0);
 	cfb_framebuffer_finalize(display);
-	/* Find the smallest font (usually index 0) */
 	int num_fonts = cfb_get_numof_fonts(display);
 	for (int i = 0; i < num_fonts; i++) {
+		uint8_t font_width, font_height;
 		cfb_get_font_size(display, i, &font_width, &font_height);
 		LOG_INF("Font[%d]: %dx%d", i, font_width, font_height);
 	}
 	cfb_framebuffer_set_font(display, 0);
-	cfb_get_font_size(display, 0, &font_width, &font_height);
 
 	while (1) {
 		k_msgq_get(&sensor_msgq, &data, K_MSEC(500));
 		cfb_framebuffer_clear(display, false);
 
 		if (!view_history) {
-			float t = use_fahrenheit ? (last_live_temp * 9.0f / 5.0f + 32.0f) : last_live_temp;
 			cfb_print(display, "-LIVE VIEW-", 0, 0);
-			snprintf(str, sizeof(str), "Temp%.2f %c", (double)t, use_fahrenheit ? 'F' : 'C');
+			format_temp_display(str, sizeof(str), last_live_temp, use_fahrenheit);
 			cfb_print(display, str, 0, 15);
 			cfb_print(display, "PA1:SAVE PC5:HIST", 0, 34);
 		} else {
 			float h_temp = flash_read_record(history_index);
-			float t = use_fahrenheit ? (h_temp * 9.0f / 5.0f + 32.0f) : h_temp;
-			snprintf(str, sizeof(str), "- HIST [%d/%d] -", history_index + 1, saved_count);
+			format_history_header(str, sizeof(str), history_index, saved_count);
 			cfb_print(display, str, 0, 0);
-			snprintf(str, sizeof(str), "Temp: %.2f %c", (double)t, use_fahrenheit ? 'F' : 'C');
+			format_temp_display(str, sizeof(str), h_temp, use_fahrenheit);
 			cfb_print(display, str, 0, 12);
 			cfb_print(display, "PA1:NEXT PC5:EXIT", 0, 54);
 		}
@@ -183,33 +205,33 @@ void input_thread_entry(void *p1, void *p2, void *p3)
 		}
 		if (gpio_pin_get_dt(&btn_save)) {
 			if (!view_history) flash_save_record(last_live_temp);
-			else if (saved_count > 0) history_index = (history_index + 1) % saved_count;
+			else history_index = get_next_history_index(history_index, saved_count);
 			k_msleep(500);
 		}
 		if (gpio_pin_get_dt(&btn_hist)) {
 			uint32_t start = k_uptime_get_32();
+			bool erased = false;
 			while (gpio_pin_get_dt(&btn_hist)) {
 				if (k_uptime_get_32() - start > 2000) {
 					LOG_INF("Erasing History...");
 					flash_erase(flash, 0, 4096);
 					saved_count = 0; view_history = false;
+					erased = true;
 					break;
 				}
 				k_msleep(10);
 			}
-			view_history = !view_history;
-			if (view_history && saved_count > 0) history_index = 0;
+			if (!erased) {
+				view_history = !view_history;
+				if (view_history && saved_count > 0) history_index = 0;
+			}
 			k_msleep(200);
 		}
 		k_msleep(50);
 	}
 }
 
-K_THREAD_DEFINE(sensor_tid, STACK_SIZE, sensor_thread_entry, NULL, NULL, NULL, PRIORITY, 0, 0);
-K_THREAD_DEFINE(ui_tid,     STACK_SIZE, ui_thread_entry,     NULL, NULL, NULL, PRIORITY, 0, 0);
-K_THREAD_DEFINE(input_tid,  STACK_SIZE, input_thread_entry,  NULL, NULL, NULL, PRIORITY, 0, 0);
-
-int main(void)
+void app_setup(void)
 {
 	gpio_pin_configure_dt(&led, GPIO_OUTPUT_INACTIVE);
 	gpio_pin_configure_dt(&btn_exit, GPIO_INPUT);
@@ -223,6 +245,50 @@ int main(void)
 	gpio_pin_interrupt_configure_dt(&btn_exit, GPIO_INT_EDGE_TO_ACTIVE);
 	gpio_init_callback(&exit_btn_cb_data, exit_btn_isr, BIT(btn_exit.pin));
 	gpio_add_callback(btn_exit.port, &exit_btn_cb_data);
+}
 
+#ifdef CONFIG_ZTEST
+struct k_thread sensor_tid_data;
+struct k_thread ui_tid_data;
+struct k_thread input_tid_data;
+k_tid_t sensor_tid = NULL;
+k_tid_t ui_tid = NULL;
+k_tid_t input_tid = NULL;
+K_THREAD_STACK_DEFINE(sensor_stack, STACK_SIZE);
+K_THREAD_STACK_DEFINE(ui_stack,     STACK_SIZE);
+K_THREAD_STACK_DEFINE(input_stack,  STACK_SIZE);
+
+void start_sensor_thread(void) {
+	sensor_tid = k_thread_create(&sensor_tid_data, sensor_stack, STACK_SIZE, sensor_thread_entry, NULL, NULL, NULL, PRIORITY, 0, K_NO_WAIT);
+}
+void start_ui_thread(void) {
+	ui_tid     = k_thread_create(&ui_tid_data, ui_stack, STACK_SIZE, ui_thread_entry, NULL, NULL, NULL, PRIORITY, 0, K_NO_WAIT);
+}
+void start_input_thread(void) {
+	input_tid  = k_thread_create(&input_tid_data, input_stack, STACK_SIZE, input_thread_entry, NULL, NULL, NULL, PRIORITY, 0, K_NO_WAIT);
+}
+
+void start_app_threads(void) {
+	start_sensor_thread();
+	start_ui_thread();
+	start_input_thread();
+}
+
+void stop_app_threads(void) {
+	if (sensor_tid) { k_thread_abort(sensor_tid); sensor_tid = NULL; }
+	if (ui_tid)     { k_thread_abort(ui_tid);     ui_tid = NULL; }
+	if (input_tid)  { k_thread_abort(input_tid);  input_tid = NULL; }
+}
+#else
+K_THREAD_DEFINE(sensor_tid, STACK_SIZE, sensor_thread_entry, NULL, NULL, NULL, PRIORITY, 0, 0);
+K_THREAD_DEFINE(ui_tid,     STACK_SIZE, ui_thread_entry,     NULL, NULL, NULL, PRIORITY, 0, 0);
+K_THREAD_DEFINE(input_tid,  STACK_SIZE, input_thread_entry,  NULL, NULL, NULL, PRIORITY, 0, 0);
+#endif
+
+#ifndef CONFIG_ZTEST
+int main(void)
+{
+	app_setup();
 	return 0;
 }
+#endif

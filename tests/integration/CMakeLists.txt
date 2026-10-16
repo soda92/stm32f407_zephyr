@@ -1,0 +1,11 @@
+cmake_minimum_required(VERSION 3.20)
+find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
+project(integration_tests)
+
+zephyr_include_directories(../../src)
+
+target_sources(app PRIVATE 
+    src/test_system.c 
+    ../../src/main.c
+    ../../src/app_logic.c
+)
